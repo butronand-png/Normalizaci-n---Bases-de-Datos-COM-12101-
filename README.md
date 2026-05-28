@@ -222,3 +222,118 @@ SELECT clave_concepto, ciclo, mes, monto FROM deuda_raw;
     ├── 02_normalized_ddl.sql            ← DDL del esquema 3FN
     └── 03_populate.sql                  ← INSERT ... SELECT
 ```
+
+---
+
+## 8. Cómo replicar paso a paso
+
+### Requisitos previos
+
+- PostgreSQL 14 o superior instalado y corriendo
+- Git instalado
+- El archivo CSV está incluido en el repositorio (`data/`)
+
+### Paso 1 — Clonar el repositorio
+
+```bash
+git clone https://github.com/butronand-png/Normalizaci-n---Bases-de-Datos-COM-12101-
+cd Normalizaci-n---Bases-de-Datos-COM-12101-
+```
+
+### Paso 2 — Ajustar la ruta del CSV en el script 01
+
+Abre `sql/01_create_raw.sql` y reemplaza la línea del `COPY` con la ruta absoluta
+real del CSV en tu máquina:
+
+**En macOS/Linux:**
+```sql
+-- Reemplaza esto:
+COPY deuda_raw FROM '/data/deuda_publica_2011_012026.csv' ...
+
+-- Por la ruta absoluta en tu máquina, por ejemplo:
+COPY deuda_raw FROM '/Users/tu_usuario/Normalizaci-n---Bases-de-Datos-COM-12101-/data/deuda_publica_2011_012026.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+```
+
+**En Windows:**
+```sql
+COPY deuda_raw FROM 'C:\\Users\\tu_usuario\\Normalizaci-n---Bases-de-Datos-COM-12101-\\data\\deuda_publica_2011_012026.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+```
+
+**Con Docker (recomendado para evitar problemas de rutas):**
+```bash
+# Copia el CSV dentro del contenedor primero
+docker cp data/deuda_publica_2011_012026.csv <nombre_contenedor>:/tmp/deuda_publica_2011_012026.csv
+
+# Luego en el script usa:
+# COPY deuda_raw FROM '/tmp/deuda_publica_2011_012026.csv' ...
+```
+
+### Paso 3 — Ejecutar los scripts en orden
+
+**Opción A — desde terminal con psql:**
+
+```bash
+# Conectarse a PostgreSQL
+psql -U postgres
+
+# Ejecutar los 3 scripts en orden
+\i sql/01_create_raw.sql
+\i sql/02_normalized_ddl.sql
+\i sql/03_populate.sql
+```
+
+**Opción B — desde DBeaver u otro cliente SQL:**
+
+1. Conectarse a la base de datos `postgres`
+2. Abrir y ejecutar `sql/01_create_raw.sql`
+3. Abrir y ejecutar `sql/02_normalized_ddl.sql`
+4. Abrir y ejecutar `sql/03_populate.sql`
+
+### Paso 4 — Verificar el resultado
+
+El script `03_populate.sql` incluye una consulta de verificación al final.
+El resultado esperado es:
+
+```
+  tabla   | filas
+----------+-------
+ sector   |     4
+ concepto |   519
+ registro | 82455
+```
+
+### Paso 5 — Consultar las tablas normalizadas
+
+Una vez pobladas las tablas, puedes explorar los datos con queries como:
+
+```sql
+-- Ver todos los sectores y sus ámbitos
+SELECT * FROM sector;
+
+-- Ver conceptos de un subtema específico
+SELECT clave_concepto, nombre, unidad_medida
+FROM concepto
+WHERE subtema = 'Deuda Externa de México';
+
+-- Serie de tiempo de un indicador (JOIN completo)
+SELECT r.ciclo, r.mes, r.monto, c.nombre, c.unidad_medida, s.ambito
+FROM registro r
+JOIN concepto c ON r.clave_concepto = c.clave_concepto
+JOIN sector   s ON c.sector = s.sector
+WHERE r.clave_concepto = 'XEM280'
+ORDER BY r.ciclo,
+         ARRAY_POSITION(ARRAY['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                               'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'],
+                        r.mes);
+
+-- Comparar tamaño original vs normalizado
+SELECT 'deuda_raw' AS tabla, COUNT(*) AS filas FROM deuda_raw
+UNION ALL
+SELECT 'sector',   COUNT(*) FROM sector
+UNION ALL
+SELECT 'concepto', COUNT(*) FROM concepto
+UNION ALL
+SELECT 'registro', COUNT(*) FROM registro;
+```
